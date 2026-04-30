@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Planner">
+<meta name="theme-color" content="#0F172A">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Daily Planner</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body,#root{height:100%;background:#0F172A}
+body{font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#fff;overscroll-behavior:none}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.1)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(100%)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastIn{0%{opacity:0;transform:translate(-50%,20px) scale(0.8)}100%{opacity:1;transform:translate(-50%,0) scale(1)}}
+@keyframes toastOut{0%{opacity:1;transform:translate(-50%,0) scale(1)}100%{opacity:0;transform:translate(-50%,-10px) scale(0.9)}}
+@keyframes confettiFall{0%{transform:translateY(0) rotate(0deg);opacity:1}100%{transform:translateY(100vh) rotate(720deg);opacity:0}}
+@keyframes sparkle{0%{transform:scale(0) rotate(0deg);opacity:1}50%{transform:scale(1.2) rotate(180deg);opacity:0.8}100%{transform:scale(0) rotate(360deg);opacity:0}}
+@keyframes bigEmoji{0%{transform:translate(-50%,-50%) scale(0);opacity:0}20%{transform:translate(-50%,-50%) scale(1.3);opacity:1}40%{transform:translate(-50%,-50%) scale(1);opacity:1}100%{transform:translate(-50%,-50%) scale(1.5);opacity:0}}
+.date-strip::-webkit-scrollbar{display:none}
+input:focus{outline:none}
+#confetti-container{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999;overflow:hidden}
+.confetti-piece{position:absolute;top:-20px;width:10px;height:10px;animation:confettiFall linear forwards}
+.toast-popup{position:fixed;bottom:100px;left:50%;transform:translate(-50%,0);z-index:9998;padding:14px 24px;border-radius:16px;font-weight:700;font-size:15px;text-align:center;pointer-events:none;white-space:nowrap;font-family:'SF Pro Display',sans-serif;animation:toastIn 0.3s ease forwards}
+.toast-popup.hiding{animation:toastOut 0.3s ease forwards}
+.big-emoji{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%);font-size:64px;pointer-events:none;z-index:9998;animation:bigEmoji 1.2s ease forwards}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const {useState,useEffect,useRef}=React;
+
+// ─── Storage via localStorage ───
+const KEYS={routines:"planner:routines_v4",todos:"planner:todos_v4",habits:"planner:habits_v4",completions:"planner:completions_v4",habitLog:"planner:habitLog_v4"};
+const dateStr=(d)=>d.toISOString().slice(0,10);
+const todayStr=()=>dateStr(new Date());
+function load(key,fb){try{const v=localStorage.getItem(key);return v?JSON.parse(v):fb;}catch{return fb;}}
+function save(key,val){try{localStorage.setItem(key,JSON.stringify(val));}catch(e){console.error(e);}}
+const uid=()=>Math.random().toString(36).slice(2,8);
+
+// ─── Celebration System ───
+const CONFETTI_COLORS=["#EF4444","#F59E0B","#10B981","#3B82F6","#8B5CF6","#EC4899","#F97316","#6366F1","#34D399","#FBBF24"];
+const ROUTINE_MSGS=["Crushed it! 💪","One down! Keep going!","Boom! Done! 🎯","Nailed it! ✨","You're on fire! 🔥","Check! ✅","Let's gooo! 🚀","Smooth moves! 😎"];
+const TODO_MSGS=["Task slayed! ⚔️","Off the list! 📋","Done and dusted! ✨","Productivity queen! 👑","Another one bites the dust!","Sorted! 🙌","Boss move! 💅","That's how it's done!"];
+const HABIT_MSGS=["Streak growing! 🔥","Consistency is key! 🗝️","Building power! ⚡","Day by day! 💪","Habit locked in! 🔒","Keep stacking! 📈","Legend behaviour! 🏆","Unstoppable! 🚀"];
+const ALL_DONE_MSGS=["ALL DONE! You're a machine! 🤖","100%! Perfect day! 🌟","Everything checked off! Champion! 🏆","Flawless execution! 💎"];
+
+function randomFrom(arr){return arr[Math.floor(Math.random()*arr.length)];}
+
+function spawnConfetti(count=30){
+  let container=document.getElementById("confetti-container");
+  if(!container){container=document.createElement("div");container.id="confetti-container";document.body.appendChild(container);}
+  for(let i=0;i<count;i++){
+    const piece=document.createElement("div");piece.className="confetti-piece";
+    const color=randomFrom(CONFETTI_COLORS);
+    const shapes=["50%","0","30%"];const shape=randomFrom(shapes);
+    const size=Math.random()*8+6;
+    piece.style.cssText=`left:${Math.random()*100}%;width:${size}px;height:${size}px;background:${color};border-radius:${shape};animation-duration:${Math.random()*2+1.5}s;animation-delay:${Math.random()*0.5}s;opacity:0.9;`;
+    container.appendChild(piece);
+    setTimeout(()=>piece.remove(),4000);
+  }
+}
+
+function spawnSparkles(count=8){
+  let container=document.getElementById("confetti-container");
+  if(!container){container=document.createElement("div");container.id="confetti-container";document.body.appendChild(container);}
+  const sparkles=["✨","⭐","💫","🌟"];
+  for(let i=0;i<count;i++){
+    const s=document.createElement("div");
+    s.style.cssText=`position:absolute;left:${20+Math.random()*60}%;top:${20+Math.random()*60}%;font-size:${20+Math.random()*20}px;animation:sparkle ${0.6+Math.random()*0.8}s ease forwards;animation-delay:${Math.random()*0.3}s;pointer-events:none;`;
+    s.textContent=randomFrom(sparkles);
+    container.appendChild(s);
+    setTimeout(()=>s.remove(),2000);
+  }
+}
+
+function showBigEmoji(emoji){
+  const el=document.createElement("div");el.className="big-emoji";el.textContent=emoji;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(),1500);
+}
+
+function showToast(msg,bg="linear-gradient(135deg,#6366F1,#8B5CF6)"){
+  const existing=document.querySelectorAll(".toast-popup");existing.forEach(e=>e.remove());
+  const toast=document.createElement("div");toast.className="toast-popup";
+  toast.style.background=bg;toast.style.color="white";toast.style.boxShadow="0 8px 32px rgba(0,0,0,0.4)";
+  toast.textContent=msg;
+  document.body.appendChild(toast);
+  setTimeout(()=>{toast.classList.add("hiding");setTimeout(()=>toast.remove(),300);},1800);
+}
+
+function celebrateRoutine(){spawnSparkles(6);showToast(randomFrom(ROUTINE_MSGS));}
+function celebrateTodo(){spawnConfetti(20);showToast(randomFrom(TODO_MSGS),"linear-gradient(135deg,#10B981,#059669)");}
+function celebrateHabit(streak){
+  if(streak>0&&streak%7===0){spawnConfetti(50);showBigEmoji("🏆");showToast(`${streak} day streak! Incredible!`,"linear-gradient(135deg,#F59E0B,#D97706)");}
+  else{spawnSparkles(5);showToast(randomFrom(HABIT_MSGS),"linear-gradient(135deg,#F59E0B,#D97706)");}
+}
+function celebrateAllDone(){setTimeout(()=>{spawnConfetti(60);showBigEmoji("🎉");showToast(randomFrom(ALL_DONE_MSGS),"linear-gradient(135deg,#34D399,#10B981)");},400);}
+
+// ─── Auto icon ───
+const ICON_MAP=[[/wake|alarm|morning|rise/i,"☀️"],[/sleep|bed|night|wind\s*down|rest/i,"🌙"],[/coffee|cafe|latte|espresso|cappuccino/i,"☕"],[/tea|chai|elaichi|green\s*tea/i,"🍵"],[/water|hydrat|drink/i,"💧"],[/milk|lassi/i,"🥛"],[/breakfast|cereal|oat/i,"🥣"],[/lunch|meal|biryani|rice|curry/i,"🍛"],[/dinner|supper/i,"🍽️"],[/snack|fruit|apple|banana|mango/i,"🍎"],[/gym|workout|exercise|lift|weight|fitness/i,"💪"],[/run|jog|sprint|cardio/i,"🏃"],[/yoga|meditat|stretch|mindful/i,"🧘"],[/shower|bath|wash/i,"🚿"],[/read|book|study|learn/i,"📖"],[/write|journal|diary|note/i,"📝"],[/code|program|dev|work|laptop|computer/i,"💻"],[/music|song|playlist|guitar|piano/i,"🎵"],[/clean|vacuum|mop|tidy|laundry/i,"🧹"],[/cook|kitchen|bake|recipe/i,"👩‍🍳"],[/shop|grocer|buy|store|market|mall/i,"🛒"],[/gift|present|birthday|surprise/i,"🎁"],[/call|phone|ring|contact/i,"📞"],[/email|mail|send|message/i,"✉️"],[/travel|trip|flight|airport|pack/i,"✈️"],[/home|house|apartment/i,"🏠"],[/medicine|pill|vitamin|supplement|doctor/i,"💊"],[/dog|pet|walk.*dog|puppy/i,"🐕"],[/cat|kitten/i,"🐱"],[/plant|garden|water.*plant/i,"🌿"],[/pray|temple|church|mosque|spiritual/i,"🙏"],[/money|pay|bill|bank|budget|finance/i,"💰"],[/drive|car|commute|uber/i,"🚗"],[/meet|meeting|standup|sync/i,"🤝"],[/date|love|partner|anniversary/i,"❤️"],[/photo|camera|selfie|instagram/i,"📸"],[/hair|salon|barber|grooming|skincare/i,"💇"],[/dentist|teeth|floss/i,"🦷"],[/swim|pool|beach/i,"🏊"],[/bike|cycling|bicycle/i,"🚴"],[/badminton|tennis|sport|game/i,"🏸"],[/move|box|pack|shift/i,"📦"],[/fix|repair|tool/i,"🔧"]];
+function guessIcon(t){if(!t)return"⭐";for(const[r,i]of ICON_MAP){if(r.test(t))return i;}return"⭐";}
+function guessColor(t){const c=["#EF4444","#F59E0B","#10B981","#3B82F6","#8B5CF6","#EC4899","#F97316","#6366F1","#14B8A6","#92400E"];let h=0;for(let i=0;i<t.length;i++)h=t.charCodeAt(i)+((h<<5)-h);return c[Math.abs(h)%c.length];}
+
+// ─── Time helpers ───
+const formatTime=(t)=>{const[h,m]=t.split(":").map(Number);return`${h%12||12}:${m.toString().padStart(2,"0")} ${h>=12?"PM":"AM"}`;};
+const timeToMinutes=(t)=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+const minutesToTime=(mins)=>`${(Math.floor(mins/60)%24).toString().padStart(2,"0")}:${(mins%60).toString().padStart(2,"0")}`;
+const formatDuration=(mins)=>{if(!mins)return"";if(mins<60)return`${mins}m`;const h=Math.floor(mins/60),m=mins%60;return m?`${h}h ${m}m`:`${h}h`;};
+function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r;}
+function isSameDay(a,b){return dateStr(a)===dateStr(b);}
+function generateDates(startDate,repeatType){const days=repeatType==="5days"?5:repeatType==="7days"?7:repeatType==="30days"?30:1;const dates=[];for(let i=0;i<days;i++){dates.push(dateStr(addDays(new Date(startDate),i)));}return dates;}
+
+// ─── Defaults ───
+const td=todayStr();
+const DEFAULT_ROUTINES=[{id:"r1",title:"Wake up",time:"09:00",icon:"☀️",color:"#F59E0B",duration:15,alert:0,dates:[td]},{id:"r2",title:"Elaichi water",time:"09:15",icon:"🍵",color:"#10B981",duration:10,alert:0,dates:[td]},{id:"r3",title:"Shower",time:"09:30",icon:"🚿",color:"#3B82F6",duration:30,alert:0,dates:[td]},{id:"r4",title:"Coffee",time:"10:00",icon:"☕",color:"#92400E",duration:30,alert:0,dates:[td]},{id:"r5",title:"Lunch",time:"12:00",icon:"🍛",color:"#EF4444",duration:60,alert:5,dates:[td]},{id:"r6",title:"Fruits",time:"16:00",icon:"🍎",color:"#EC4899",duration:15,alert:0,dates:[td]},{id:"r7",title:"Gym",time:"18:00",icon:"💪",color:"#8B5CF6",duration:90,alert:10,dates:[td]},{id:"r8",title:"Dinner",time:"20:00",icon:"🍽️",color:"#F97316",duration:60,alert:5,dates:[td]},{id:"r9",title:"Wind down",time:"22:00",icon:"🌙",color:"#6366F1",duration:30,alert:0,dates:[td]}];
+const DEFAULT_HABITS=[{id:"h1",title:"Drink 2L water",icon:"💧",color:"#3B82F6"},{id:"h2",title:"Read 20 mins",icon:"📖",color:"#8B5CF6"},{id:"h3",title:"No junk food",icon:"🥗",color:"#10B981"}];
+
+// ─── Notification ───
+function scheduleAlert(title,time,alertMins){if(!alertMins||!("Notification" in window))return;if(Notification.permission==="default")Notification.requestPermission();const[h,m]=time.split(":").map(Number);const now=new Date();const target=new Date();target.setHours(h,m-alertMins,0,0);const diff=target-now;if(diff>0&&diff<86400000){setTimeout(()=>{if(Notification.permission==="granted"){try{new Notification(`⏰ ${title} in ${alertMins} min`,{body:`Starting at ${formatTime(time)}`});}catch(e){}}},diff);}}
+
+// ═══ DATE STRIP ═══
+function DateStrip({selectedDate,onSelect}){
+  const todayD=new Date();const ref=useRef(null);
+  const days=Array.from({length:15},(_,i)=>addDays(todayD,i-7));
+  useEffect(()=>{if(ref.current){const el=ref.current.querySelector('[data-selected="true"]');if(el)el.scrollIntoView({behavior:"smooth",block:"nearest",inline:"center"});}},[selectedDate]);
+  return React.createElement("div",{style:{padding:"0 0 0 16px"}},
+    React.createElement("div",{ref,className:"date-strip",style:{display:"flex",gap:6,overflowX:"auto",padding:"4px 8px 8px 0",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}},
+      days.map(d=>{
+        const ds=dateStr(d);const isT=isSameDay(d,todayD);const isSel=isSameDay(d,selectedDate);const isPast=d<todayD&&!isT;
+        return React.createElement("button",{key:ds,"data-selected":isSel?"true":undefined,onClick:()=>onSelect(new Date(d)),style:{display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"8px 12px",borderRadius:14,border:"none",cursor:"pointer",minWidth:52,flexShrink:0,background:isSel?"linear-gradient(135deg,#6366F1,#8B5CF6)":isT?"rgba(99,102,241,0.15)":"rgba(255,255,255,0.03)",color:isSel?"white":isPast?"rgba(255,255,255,0.3)":"rgba(255,255,255,0.6)",transition:"all 0.2s",fontFamily:"'SF Pro Display',sans-serif",boxShadow:isSel?"0 4px 15px rgba(99,102,241,0.3)":"none"}},
+          React.createElement("span",{style:{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,opacity:isSel?1:0.7}},d.toLocaleDateString("en-AU",{weekday:"short"})),
+          React.createElement("span",{style:{fontSize:20,fontWeight:700}},d.getDate()),
+          isT&&React.createElement("div",{style:{width:4,height:4,borderRadius:"50%",background:isSel?"white":"#6366F1"}})
+        );
+      })
+    )
+  );
+}
+
+// ═══ TIMELINE VIEW ═══
+function TimelineView({routines,completed,toggle,onAdd,onEdit,onDelete,nowMins,isToday}){
+  const ref=useRef(null);
+  useEffect(()=>{if(ref.current&&isToday){const el=ref.current.querySelector('[data-now="true"]');if(el)el.scrollIntoView({behavior:"smooth",block:"center"});}},[isToday]);
+  return React.createElement("div",null,
+    React.createElement("div",{style:S.sectionHeader},React.createElement("h2",{style:S.sectionTitle},"Daily Routine"),React.createElement("button",{onClick:onAdd,style:S.addBtn},"+ Add")),
+    !routines.length&&React.createElement("div",{style:S.emptyState},React.createElement("span",{style:{fontSize:48}},"📅"),React.createElement("p",{style:{fontSize:14,marginTop:12}},"No routines for this day.")),
+    React.createElement("div",{ref},routines.map((r,i)=>{
+      const mins=timeToMinutes(r.time);const endMins=mins+(r.duration||30);const isNow=isToday&&nowMins>=mins&&nowMins<endMins;const done=completed[r.id];const endTime=r.duration?formatTime(minutesToTime(endMins)):null;
+      return React.createElement("div",{key:r.id,"data-now":isNow?"true":undefined,style:{display:"flex",gap:14,position:"relative",animation:"fadeIn 0.3s ease both",animationDelay:`${i*0.04}s`}},
+        React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",width:18,paddingTop:22}},
+          React.createElement("div",{style:{width:isNow?14:10,height:isNow?14:10,borderRadius:"50%",flexShrink:0,backgroundColor:done?"#34D399":r.color,boxShadow:isNow?`0 0 14px ${r.color}`:"none",transition:"all 0.3s"}}),
+          i<routines.length-1&&React.createElement("div",{style:{width:2,flex:1,marginTop:6,borderRadius:1,backgroundColor:done?"#34D399":"rgba(255,255,255,0.08)"}})
+        ),
+        React.createElement("div",{style:{flex:1,display:"flex",alignItems:"center",gap:12,background:isNow?"rgba(99,102,241,0.08)":"rgba(255,255,255,0.03)",borderRadius:16,padding:"14px 16px",marginBottom:6,borderLeft:`3px solid ${done?"#34D399":r.color}`,transition:"all 0.25s"}},
+          React.createElement("button",{onClick:()=>toggle(r.id),style:S.checkBtn},React.createElement("div",{style:{...S.checkbox,...(done?S.checkboxDone:{})}},done&&React.createElement("span",{style:S.checkmark},"✓"))),
+          React.createElement("div",{style:{flex:1}},
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}},
+              React.createElement("span",{style:{fontSize:11,fontWeight:600,color:isNow?"#34D399":"rgba(255,255,255,0.4)",letterSpacing:0.5}},formatTime(r.time),endTime&&React.createElement("span",{style:{opacity:0.6}}," → ",endTime)),
+              r.duration&&React.createElement("span",{style:{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.35)",fontWeight:600}},formatDuration(r.duration)),
+              r.alert>0&&React.createElement("span",{style:{fontSize:9,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:600}},"🔔",r.alert,"m")
+            ),
+            React.createElement("span",{style:{fontSize:15,fontWeight:600,...(done?{textDecoration:"line-through",opacity:0.4}:{})}},r.icon," ",r.title)
+          ),
+          React.createElement("div",{style:{display:"flex",gap:2}},
+            React.createElement("button",{onClick:()=>onEdit(r),style:S.iconBtn},"✎"),
+            React.createElement("button",{onClick:()=>onDelete(r.id),style:S.iconBtn},"✕")
+          )
+        )
+      );
+    }))
+  );
+}
+
+// ═══ TODO VIEW ═══
+function TodoView({todos,completed,toggle,onAdd,onEdit,onDelete}){
+  const pOrder={high:0,medium:1,low:2};const pColor={high:"#EF4444",medium:"#F59E0B",low:"#3B82F6"};const pLabel={high:"HIGH",medium:"MED",low:"LOW"};
+  const pending=[...todos.filter(t=>!completed[t.id])].sort((a,b)=>(pOrder[a.priority]??1)-(pOrder[b.priority]??1));
+  const done=todos.filter(t=>completed[t.id]);
+  return React.createElement("div",null,
+    React.createElement("div",{style:S.sectionHeader},React.createElement("h2",{style:S.sectionTitle},"To-Do List"),React.createElement("button",{onClick:onAdd,style:S.addBtn},"+ Add")),
+    !pending.length&&!done.length&&React.createElement("div",{style:S.emptyState},React.createElement("span",{style:{fontSize:48}},"📋"),React.createElement("p",{style:{fontSize:14,marginTop:12}},"No tasks. Tap + Add to create one.")),
+    pending.map((t,i)=>React.createElement("div",{key:t.id,style:{display:"flex",alignItems:"center",gap:12,background:"rgba(255,255,255,0.03)",borderRadius:16,padding:"14px 16px",marginBottom:6,borderLeft:`3px solid ${pColor[t.priority]||"#3B82F6"}`,animation:"fadeIn 0.3s ease both",animationDelay:`${i*0.04}s`}},
+      React.createElement("button",{onClick:()=>toggle(t.id),style:S.checkBtn},React.createElement("div",{style:S.checkbox})),
+      React.createElement("div",{style:{flex:1}},React.createElement("span",{style:{fontSize:15,fontWeight:600}},t.icon," ",t.title)),
+      React.createElement("span",{style:{fontSize:9,fontWeight:700,padding:"3px 8px",borderRadius:6,backgroundColor:(pColor[t.priority]||"#3B82F6")+"20",color:pColor[t.priority]||"#3B82F6",letterSpacing:0.5}},pLabel[t.priority]||"MED"),
+      React.createElement("button",{onClick:()=>onEdit(t),style:S.iconBtn},"✎"),
+      React.createElement("button",{onClick:()=>onDelete(t.id),style:S.iconBtn},"✕")
+    )),
+    done.length>0&&React.createElement(React.Fragment,null,
+      React.createElement("p",{style:S.doneLabel},"Completed (",done.length,")"),
+      done.map(t=>React.createElement("div",{key:t.id,style:{display:"flex",alignItems:"center",gap:12,opacity:0.4,background:"rgba(255,255,255,0.03)",borderRadius:16,padding:"14px 16px",marginBottom:6}},
+        React.createElement("button",{onClick:()=>toggle(t.id),style:S.checkBtn},React.createElement("div",{style:{...S.checkbox,...S.checkboxDone}},React.createElement("span",{style:S.checkmark},"✓"))),
+        React.createElement("span",{style:{flex:1,fontSize:15,fontWeight:600,textDecoration:"line-through"}},t.icon," ",t.title),
+        React.createElement("button",{onClick:()=>onDelete(t.id),style:S.iconBtn},"✕")
+      ))
+    )
+  );
+}
+
+// ═══ HABITS VIEW ═══
+function HabitsView({habits,habitLog,toggleHabit,getStreak,onAdd,onDelete,selectedDateStr}){
+  const last7=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(6-i));return d.toISOString().slice(0,10);});
+  const dayLabels=last7.map(d=>new Date(d+"T00:00:00").toLocaleDateString("en-AU",{weekday:"narrow"}));
+  return React.createElement("div",null,
+    React.createElement("div",{style:S.sectionHeader},React.createElement("h2",{style:S.sectionTitle},"Habits"),React.createElement("button",{onClick:onAdd,style:S.addBtn},"+ Add")),
+    !habits.length&&React.createElement("div",{style:S.emptyState},React.createElement("span",{style:{fontSize:48}},"🔥"),React.createElement("p",{style:{fontSize:14,marginTop:12}},"No habits yet.")),
+    habits.map((h,i)=>{
+      const streak=getStreak(h.id);const doneOn=(habitLog[h.id]||[]).includes(selectedDateStr);
+      return React.createElement("div",{key:h.id,style:{background:"rgba(255,255,255,0.03)",borderRadius:16,padding:16,marginBottom:8,borderLeft:`3px solid ${h.color}`,animation:"fadeIn 0.3s ease both",animationDelay:`${i*0.04}s`}},
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:12}},
+          React.createElement("button",{onClick:()=>toggleHabit(h.id),style:S.checkBtn},React.createElement("div",{style:{...S.checkbox,...(doneOn?S.checkboxDone:{})}},doneOn&&React.createElement("span",{style:S.checkmark},"✓"))),
+          React.createElement("div",{style:{flex:1}},React.createElement("span",{style:{fontSize:15,fontWeight:600}},h.icon," ",h.title),React.createElement("div",{style:{fontSize:12,color:"#F59E0B",fontWeight:600,marginTop:2}},"🔥 ",streak," day streak")),
+          React.createElement("button",{onClick:()=>onDelete(h.id),style:S.iconBtn},"✕")
+        ),
+        React.createElement("div",{style:{display:"flex",justifyContent:"space-between",marginTop:14,padding:"0 32px"}},
+          last7.map((d,j)=>{const active=(habitLog[h.id]||[]).includes(d);return React.createElement("div",{key:d,style:{display:"flex",flexDirection:"column",alignItems:"center",gap:6}},React.createElement("span",{style:{fontSize:10,color:"rgba(255,255,255,0.35)",fontWeight:600}},dayLabels[j]),React.createElement("div",{style:{width:20,height:20,borderRadius:"50%",backgroundColor:active?h.color:"rgba(255,255,255,0.08)",transition:"all 0.3s"}}));})
+        )
+      );
+    })
+  );
+}
+
+// ═══ MODALS ═══
+function RoutineModal({editing,selectedDate,onClose,onSave}){
+  const[title,setTitle]=useState(editing?.title||"");const[hour,setHour]=useState(editing?parseInt(editing.time.split(":")[0]):9);const[minute,setMinute]=useState(editing?parseInt(editing.time.split(":")[1]):0);const[color,setColor]=useState(editing?.color||"");const[duration,setDuration]=useState(editing?.duration||30);const[alert,setAlert]=useState(editing?.alert||0);const[repeat,setRepeat]=useState("none");
+  const autoIcon=guessIcon(title);const autoColor=color||guessColor(title);const DURATIONS=[10,15,30,45,60,90,120,180,240];const ALERTS=[0,5,10,15,30];const COLORS=["#EF4444","#F59E0B","#10B981","#3B82F6","#8B5CF6","#EC4899","#F97316","#6366F1","#14B8A6","#92400E"];const ampm=hour>=12?"PM":"AM";const h12=hour%12||12;
+  const handleSave=()=>{if(!title.trim())return;const time=`${hour.toString().padStart(2,"0")}:${minute.toString().padStart(2,"0")}`;const icon=guessIcon(title.trim());const col=autoColor;if(editing){onSave([{...editing,title:title.trim(),time,icon,color:col,duration,alert}]);}else{const dates=generateDates(selectedDate,repeat);onSave([{id:uid(),title:title.trim(),time,icon,color:col,duration,alert,dates}]);}};
+  return React.createElement("div",{style:S.overlay,onClick:onClose},
+    React.createElement("div",{style:{...S.modal,animation:"slideUp 0.3s ease"},onClick:e=>e.stopPropagation()},
+      React.createElement("h3",{style:S.modalTitle},editing?"Edit Routine":"New Routine"),
+      React.createElement("label",{style:S.label},"What's the task?"),
+      React.createElement("input",{style:S.input,value:title,onChange:e=>setTitle(e.target.value),placeholder:"e.g. Morning walk, Lunch, Gym...",autoFocus:true}),
+      title&&React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:10,padding:"10px 14px",background:"rgba(255,255,255,0.04)",borderRadius:12,borderLeft:`3px solid ${autoColor}`}},React.createElement("span",{style:{fontSize:24}},autoIcon),React.createElement("span",{style:{fontSize:14,fontWeight:600,opacity:0.7}},title),React.createElement("span",{style:{fontSize:10,marginLeft:"auto",opacity:0.35}},"auto-detected")),
+      React.createElement("label",{style:S.label},"Time"),
+      React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"rgba(255,255,255,0.04)",borderRadius:16,padding:"16px 20px"}},
+        React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"center"}},React.createElement("button",{onClick:()=>setHour((hour+1)%24),style:S.timeBtn},"▲"),React.createElement("span",{style:{fontSize:36,fontWeight:700,fontVariantNumeric:"tabular-nums",width:56,textAlign:"center"}},h12),React.createElement("button",{onClick:()=>setHour((hour-1+24)%24),style:S.timeBtn},"▼")),
+        React.createElement("span",{style:{fontSize:36,fontWeight:700,opacity:0.3}},":"),
+        React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"center"}},React.createElement("button",{onClick:()=>setMinute((minute+5)%60),style:S.timeBtn},"▲"),React.createElement("span",{style:{fontSize:36,fontWeight:700,fontVariantNumeric:"tabular-nums",width:56,textAlign:"center"}},minute.toString().padStart(2,"0")),React.createElement("button",{onClick:()=>setMinute((minute-5+60)%60),style:S.timeBtn},"▼")),
+        React.createElement("button",{onClick:()=>setHour(hour>=12?hour-12:hour+12),style:{padding:"8px 14px",borderRadius:10,border:"none",fontWeight:700,fontSize:14,background:ampm==="AM"?"rgba(59,130,246,0.2)":"rgba(139,92,246,0.2)",color:ampm==="AM"?"#60A5FA":"#A78BFA",cursor:"pointer",fontFamily:"'SF Pro Display',sans-serif"}},ampm)
+      ),
+      React.createElement("label",{style:S.label},"Duration"),
+      React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},DURATIONS.map(d=>React.createElement("button",{key:d,onClick:()=>setDuration(d),style:{...S.chipBtn,...(duration===d?S.chipActive:{})}},formatDuration(d)))),
+      React.createElement("label",{style:S.label},"Alert before"),
+      React.createElement("div",{style:{display:"flex",gap:6}},ALERTS.map(a=>React.createElement("button",{key:a,onClick:()=>setAlert(a),style:{...S.chipBtn,...(alert===a?{...S.chipActive,background:"rgba(245,158,11,0.2)",borderColor:"#F59E0B",color:"#F59E0B"}:{})}},a===0?"None":`${a}m`))),
+      !editing&&React.createElement(React.Fragment,null,React.createElement("label",{style:S.label},"Repeat"),React.createElement("div",{style:{display:"flex",gap:6}},[["none","Just today"],["5days","5 days"],["7days","7 days"],["30days","30 days"]].map(([k,l])=>React.createElement("button",{key:k,onClick:()=>setRepeat(k),style:{...S.chipBtn,...(repeat===k?{...S.chipActive,background:"rgba(16,185,129,0.2)",borderColor:"#10B981",color:"#10B981"}:{})}},l)))),
+      React.createElement("label",{style:S.label},"Color"),
+      React.createElement("div",{style:{display:"flex",gap:8}},COLORS.map(c=>React.createElement("button",{key:c,onClick:()=>setColor(c),style:{width:26,height:26,borderRadius:"50%",border:"none",backgroundColor:c,cursor:"pointer",outline:autoColor===c?"2px solid white":"none",outlineOffset:2,transition:"all 0.15s"}}))),
+      React.createElement("div",{style:S.modalActions},React.createElement("button",{onClick:onClose,style:S.cancelBtn},"Cancel"),React.createElement("button",{onClick:handleSave,style:{...S.saveBtn,opacity:title.trim()?1:0.4}},editing?"Update":"Add Routine"))
+    )
+  );
+}
+
+function TodoModal({editing,selectedDate,onClose,onSave}){
+  const[title,setTitle]=useState(editing?.title||"");const[priority,setPriority]=useState(editing?.priority||"medium");const pColor={high:"#EF4444",medium:"#F59E0B",low:"#3B82F6"};
+  return React.createElement("div",{style:S.overlay,onClick:onClose},
+    React.createElement("div",{style:{...S.modal,animation:"slideUp 0.3s ease"},onClick:e=>e.stopPropagation()},
+      React.createElement("h3",{style:S.modalTitle},editing?"Edit Task":"New Task"),
+      React.createElement("label",{style:S.label},"What do you need to do?"),
+      React.createElement("input",{style:S.input,value:title,onChange:e=>setTitle(e.target.value),placeholder:"e.g. Buy groceries, clean vacuum...",autoFocus:true}),
+      title&&React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:10,padding:"10px 14px",background:"rgba(255,255,255,0.04)",borderRadius:12,borderLeft:`3px solid ${pColor[priority]}`}},React.createElement("span",{style:{fontSize:24}},guessIcon(title)),React.createElement("span",{style:{fontSize:14,fontWeight:600,opacity:0.7}},title)),
+      React.createElement("label",{style:S.label},"Priority"),
+      React.createElement("div",{style:{display:"flex",gap:8}},[["high","🔴 High"],["medium","🟡 Medium"],["low","🔵 Low"]].map(([k,l])=>React.createElement("button",{key:k,onClick:()=>setPriority(k),style:{flex:1,padding:"12px",borderRadius:12,border:"1px solid",borderColor:priority===k?pColor[k]:"rgba(255,255,255,0.1)",background:priority===k?pColor[k]+"18":"rgba(255,255,255,0.03)",color:priority===k?pColor[k]:"rgba(255,255,255,0.4)",cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"'SF Pro Display',sans-serif",transition:"all 0.2s"}},l))),
+      React.createElement("div",{style:S.modalActions},React.createElement("button",{onClick:onClose,style:S.cancelBtn},"Cancel"),React.createElement("button",{onClick:()=>title.trim()&&onSave({...(editing||{}),title:title.trim(),icon:guessIcon(title.trim()),priority,createdDate:editing?.createdDate||selectedDate}),style:{...S.saveBtn,opacity:title.trim()?1:0.4}},editing?"Update":"Add Task"))
+    )
+  );
+}
+
+function HabitModal({onClose,onSave}){
+  const[title,setTitle]=useState("");const[color,setColor]=useState("#3B82F6");const COLORS=["#EF4444","#F59E0B","#10B981","#3B82F6","#8B5CF6","#EC4899","#F97316","#6366F1"];
+  return React.createElement("div",{style:S.overlay,onClick:onClose},
+    React.createElement("div",{style:{...S.modal,animation:"slideUp 0.3s ease"},onClick:e=>e.stopPropagation()},
+      React.createElement("h3",{style:S.modalTitle},"New Habit"),
+      React.createElement("label",{style:S.label},"What habit to build?"),
+      React.createElement("input",{style:S.input,value:title,onChange:e=>setTitle(e.target.value),placeholder:"e.g. Meditate 10 mins, Read before bed...",autoFocus:true}),
+      title&&React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:10,padding:"10px 14px",background:"rgba(255,255,255,0.04)",borderRadius:12,borderLeft:`3px solid ${color}`}},React.createElement("span",{style:{fontSize:24}},guessIcon(title)),React.createElement("span",{style:{fontSize:14,fontWeight:600,opacity:0.7}},title)),
+      React.createElement("label",{style:S.label},"Color"),
+      React.createElement("div",{style:{display:"flex",gap:8}},COLORS.map(c=>React.createElement("button",{key:c,onClick:()=>setColor(c),style:{width:28,height:28,borderRadius:"50%",border:"none",backgroundColor:c,cursor:"pointer",outline:color===c?"2px solid white":"none",outlineOffset:2,transition:"all 0.15s"}}))),
+      React.createElement("div",{style:S.modalActions},React.createElement("button",{onClick:onClose,style:S.cancelBtn},"Cancel"),React.createElement("button",{onClick:()=>title.trim()&&onSave({title:title.trim(),icon:guessIcon(title.trim()),color}),style:{...S.saveBtn,opacity:title.trim()?1:0.4}},"Add Habit"))
+    )
+  );
+}
+
+// ═══ MAIN APP ═══
+function DailyPlanner(){
+  const[tab,setTab]=useState("timeline");const[routines,setRoutines]=useState(()=>load(KEYS.routines,DEFAULT_ROUTINES));const[todos,setTodos]=useState(()=>load(KEYS.todos,[]));const[habits,setHabits]=useState(()=>load(KEYS.habits,DEFAULT_HABITS));const[completions,setCompletions]=useState(()=>load(KEYS.completions,{}));const[habitLog,setHabitLog]=useState(()=>load(KEYS.habitLog,{}));const[modal,setModal]=useState(null);const[currentTime,setCurrentTime]=useState(new Date());const[selectedDate,setSelectedDate]=useState(new Date());
+  const selDS=dateStr(selectedDate);const isToday=isSameDay(selectedDate,new Date());const dayComp=completions[selDS]||{};
+  const dayRoutines=routines.filter(r=>{if(!r.dates||!r.dates.length)return true;return r.dates.includes(selDS);}).sort((a,b)=>timeToMinutes(a.time)-timeToMinutes(b.time));
+  const dayTodos=todos.filter(t=>{const created=t.createdDate||todayStr();if(selDS<created)return false;if(t.completedDate&&selDS>t.completedDate)return false;return true;});
+  useEffect(()=>{if(isToday)dayRoutines.forEach(r=>{if(r.alert)scheduleAlert(r.title,r.time,r.alert);});},[routines,isToday]);
+  useEffect(()=>{const i=setInterval(()=>setCurrentTime(new Date()),30000);return()=>clearInterval(i);},[]);
+  const saveRoutines=(r)=>{setRoutines(r);save(KEYS.routines,r);};const saveTodos=(t)=>{setTodos(t);save(KEYS.todos,t);};const saveHabits=(h)=>{setHabits(h);save(KEYS.habits,h);};const saveCompletions=(c)=>{setCompletions(c);save(KEYS.completions,c);};const saveHabitLog=(hl)=>{setHabitLog(hl);save(KEYS.habitLog,hl);};
+  const toggleRoutineComplete=(id)=>{const d=selDS;const wasDone=completions[d]?.[id];const dd={...(completions[d]||{}),[id]:!wasDone};saveCompletions({...completions,[d]:dd});if(!wasDone){celebrateRoutine();const newCR=dayRoutines.filter(r=>dd[r.id]).length;const newCT=dayTodos.filter(t=>dd[t.id]).length;const newCH=habits.filter(h=>(habitLog[h.id]||[]).includes(d)).length;if(newCR+newCT+newCH===dayRoutines.length+dayTodos.length+habits.length&&dayRoutines.length+dayTodos.length+habits.length>0)celebrateAllDone();}};
+  const toggleTodoComplete=(id)=>{const d=selDS;const isDone=completions[d]?.[id];const dd={...(completions[d]||{}),[id]:!isDone};saveCompletions({...completions,[d]:dd});const updated=todos.map(t=>{if(t.id!==id)return t;if(!isDone)return{...t,completedDate:d};const{completedDate,...rest}=t;return rest;});saveTodos(updated);if(!isDone){celebrateTodo();const newCR=dayRoutines.filter(r=>dd[r.id]).length;const newCT=dayTodos.filter(t=>dd[t.id]).length;const newCH=habits.filter(h=>(habitLog[h.id]||[]).includes(d)).length;if(newCR+newCT+newCH===dayRoutines.length+dayTodos.length+habits.length&&dayRoutines.length+dayTodos.length+habits.length>0)celebrateAllDone();}};
+  const toggleHabit=(id)=>{const d=selDS;const log={...habitLog};if(!log[id])log[id]=[];const wasDone=log[id].includes(d);if(wasDone)log[id]=log[id].filter(x=>x!==d);else{log[id]=[...log[id],d];const streak=getStreak(id);celebrateHabit(streak+1);const dd=completions[d]||{};const newCR=dayRoutines.filter(r=>dd[r.id]).length;const newCT=dayTodos.filter(t=>dd[t.id]).length;const newCH=habits.filter(h=>(log[h.id]||[]).includes(d)).length;if(newCR+newCT+newCH===dayRoutines.length+dayTodos.length+habits.length&&dayRoutines.length+dayTodos.length+habits.length>0)celebrateAllDone();}saveHabitLog(log);};
+  const getStreak=(id)=>{const days=habitLog[id]||[];if(!days.length)return 0;const sorted=[...days].sort().reverse();let streak=0;const d=new Date();for(let i=0;i<365;i++){const ds=d.toISOString().slice(0,10);if(sorted.includes(ds))streak++;else if(i>0)break;d.setDate(d.getDate()-1);}return streak;};
+  const deleteRoutine=(id)=>saveRoutines(routines.filter(r=>r.id!==id));const deleteTodo=(id)=>saveTodos(todos.filter(t=>t.id!==id));const deleteHabit=(id)=>{saveHabits(habits.filter(h=>h.id!==id));const log={...habitLog};delete log[id];saveHabitLog(log);};
+  const cR=dayRoutines.filter(r=>dayComp[r.id]).length;const cT=dayTodos.filter(t=>dayComp[t.id]).length;const cH=habits.filter(h=>(habitLog[h.id]||[]).includes(selDS)).length;const total=dayRoutines.length+dayTodos.length+habits.length;const progress=total>0?Math.round(((cR+cT+cH)/total)*100):0;const nowMins=currentTime.getHours()*60+currentTime.getMinutes();
+
+  return React.createElement("div",{style:S.app},
+    React.createElement("div",{style:S.header},
+      React.createElement("div",{style:{flex:1}},
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10}},
+          React.createElement("h1",{style:S.headerTitle},selectedDate.toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"short"})),
+          !isToday&&React.createElement("button",{onClick:()=>setSelectedDate(new Date()),style:{padding:"4px 10px",borderRadius:8,border:"1px solid rgba(99,102,241,0.4)",background:"rgba(99,102,241,0.15)",color:"#A5B4FC",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'SF Pro Display',sans-serif"}},"TODAY")
+        ),
+        React.createElement("p",{style:S.headerSub},isToday?currentTime.toLocaleTimeString("en-AU",{hour:"2-digit",minute:"2-digit"}):selectedDate<new Date()?"Past":"Upcoming")
+      ),
+      React.createElement("div",{style:S.progressRing},
+        React.createElement("svg",{width:52,height:52,viewBox:"0 0 52 52"},React.createElement("circle",{cx:26,cy:26,r:22,fill:"none",stroke:"rgba(255,255,255,0.1)",strokeWidth:4}),React.createElement("circle",{cx:26,cy:26,r:22,fill:"none",stroke:"#34D399",strokeWidth:4,strokeDasharray:`${(progress/100)*138.2} 138.2`,strokeLinecap:"round",transform:"rotate(-90 26 26)",style:{transition:"stroke-dasharray 0.6s ease"}})),
+        React.createElement("span",{style:S.progressText},progress,"%")
+      )
+    ),
+    React.createElement(DateStrip,{selectedDate,onSelect:setSelectedDate}),
+    React.createElement("div",{style:S.tabBar},
+      [{key:"timeline",label:"Timeline",icon:"◷",badge:`${cR}/${dayRoutines.length}`},{key:"todos",label:"To-Do",icon:"☑",badge:dayTodos.length?`${cT}/${dayTodos.length}`:null},{key:"habits",label:"Habits",icon:"🔥",badge:`${cH}/${habits.length}`}].map(t=>React.createElement("button",{key:t.key,onClick:()=>setTab(t.key),style:{...S.tab,...(tab===t.key?S.tabActive:{})}},React.createElement("span",{style:{fontSize:20}},t.icon),React.createElement("span",{style:{fontSize:11}},t.label),t.badge&&React.createElement("span",{style:{fontSize:10,opacity:0.6}},t.badge)))
+    ),
+    React.createElement("div",{style:S.content},
+      tab==="timeline"&&React.createElement(TimelineView,{routines:dayRoutines,completed:dayComp,toggle:toggleRoutineComplete,onAdd:()=>setModal({type:"routine"}),onEdit:r=>setModal({type:"routine",editing:r}),onDelete:deleteRoutine,nowMins,isToday}),
+      tab==="todos"&&React.createElement(TodoView,{todos:dayTodos,completed:dayComp,toggle:toggleTodoComplete,onAdd:()=>setModal({type:"todo"}),onEdit:t=>setModal({type:"todo",editing:t}),onDelete:deleteTodo}),
+      tab==="habits"&&React.createElement(HabitsView,{habits,habitLog,toggleHabit,getStreak,onAdd:()=>setModal({type:"habit"}),onDelete:deleteHabit,selectedDateStr:selDS})
+    ),
+    modal?.type==="routine"&&React.createElement(RoutineModal,{editing:modal.editing,selectedDate:selDS,onClose:()=>setModal(null),onSave:items=>{if(modal.editing)saveRoutines(routines.map(r=>r.id===items[0].id?items[0]:r));else saveRoutines([...routines,...items]);setModal(null);}}),
+    modal?.type==="todo"&&React.createElement(TodoModal,{editing:modal.editing,selectedDate:selDS,onClose:()=>setModal(null),onSave:item=>{if(modal.editing)saveTodos(todos.map(t=>t.id===item.id?item:t));else saveTodos([...todos,{...item,id:uid()}]);setModal(null);}}),
+    modal?.type==="habit"&&React.createElement(HabitModal,{onClose:()=>setModal(null),onSave:item=>{saveHabits([...habits,{...item,id:uid()}]);setModal(null);}})
+  );
+}
+
+// ═══ STYLES ═══
+const S={
+  app:{minHeight:"100vh",background:"linear-gradient(145deg,#0F172A 0%,#1E293B 50%,#0F172A 100%)",fontFamily:"'SF Pro Display',-apple-system,BlinkMacSystemFont,sans-serif",color:"white",maxWidth:1024,margin:"0 auto",paddingBottom:40},
+  header:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"24px 24px 12px",background:"linear-gradient(180deg,rgba(99,102,241,0.12) 0%,transparent 100%)"},
+  headerTitle:{fontSize:22,fontWeight:700,margin:0,letterSpacing:"-0.5px"},
+  headerSub:{fontSize:13,color:"rgba(255,255,255,0.4)",margin:"2px 0 0",fontWeight:500},
+  progressRing:{position:"relative",width:52,height:52,display:"flex",alignItems:"center",justifyContent:"center"},
+  progressText:{position:"absolute",fontSize:12,fontWeight:700,color:"#34D399"},
+  tabBar:{display:"flex",gap:6,padding:"8px 24px",marginBottom:4},
+  tab:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"10px 0",borderRadius:14,border:"none",background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.4)",cursor:"pointer",transition:"all 0.25s ease",fontWeight:600,fontFamily:"'SF Pro Display',sans-serif"},
+  tabActive:{background:"rgba(99,102,241,0.18)",color:"white",boxShadow:"0 0 20px rgba(99,102,241,0.12)"},
+  content:{padding:"4px 24px"},
+  sectionHeader:{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"12px 0 10px"},
+  sectionTitle:{fontSize:18,fontWeight:700,margin:0},
+  addBtn:{background:"rgba(99,102,241,0.2)",border:"1px solid rgba(99,102,241,0.35)",color:"#A5B4FC",borderRadius:10,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"'SF Pro Display',sans-serif"},
+  checkBtn:{background:"none",border:"none",cursor:"pointer",padding:4},
+  checkbox:{width:24,height:24,borderRadius:8,border:"2px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.25s ease"},
+  checkboxDone:{backgroundColor:"#34D399",borderColor:"#34D399"},
+  checkmark:{color:"white",fontSize:14,fontWeight:700},
+  iconBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.2)",cursor:"pointer",fontSize:16,padding:"4px 6px",borderRadius:6,fontFamily:"'SF Pro Display',sans-serif"},
+  doneLabel:{fontSize:12,fontWeight:700,color:"rgba(255,255,255,0.25)",textTransform:"uppercase",letterSpacing:1,margin:"20px 0 8px"},
+  emptyState:{display:"flex",flexDirection:"column",alignItems:"center",padding:"60px 0",opacity:0.5},
+  overlay:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100,backdropFilter:"blur(8px)"},
+  modal:{background:"linear-gradient(145deg,#1E293B,#0F172A)",borderRadius:"24px 24px 0 0",padding:"28px 24px 36px",width:"100%",maxWidth:540,border:"1px solid rgba(255,255,255,0.06)",borderBottom:"none",maxHeight:"85vh",overflowY:"auto"},
+  modalTitle:{fontSize:20,fontWeight:700,margin:"0 0 16px"},
+  label:{fontSize:11,fontWeight:700,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:1,display:"block",margin:"16px 0 8px"},
+  input:{width:"100%",padding:"14px 16px",borderRadius:14,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"white",fontSize:16,outline:"none",fontFamily:"'SF Pro Display',sans-serif",boxSizing:"border-box"},
+  timeBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.3)",cursor:"pointer",fontSize:18,padding:"6px 12px",borderRadius:8,fontFamily:"'SF Pro Display',sans-serif"},
+  chipBtn:{padding:"9px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"'SF Pro Display',sans-serif",transition:"all 0.2s"},
+  chipActive:{background:"rgba(99,102,241,0.2)",borderColor:"#6366F1",color:"#A5B4FC"},
+  modalActions:{display:"flex",gap:10,marginTop:24},
+  cancelBtn:{flex:1,padding:"14px",borderRadius:14,border:"1px solid rgba(255,255,255,0.08)",background:"none",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontSize:14,fontWeight:600,fontFamily:"'SF Pro Display',sans-serif"},
+  saveBtn:{flex:1,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#6366F1,#8B5CF6)",color:"white",cursor:"pointer",fontSize:14,fontWeight:700,fontFamily:"'SF Pro Display',sans-serif",transition:"opacity 0.2s"},
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(DailyPlanner));
+</script>
+<script>
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW reg failed',e));}
+</script>
+</body>
+</html>
